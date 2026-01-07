@@ -2,12 +2,16 @@ import http from "http";
 import app from "./app";
 import { initSocket } from "./socket";
 import { connectDB } from "./config/db";
+import { redis } from "./config/redis";
 
 // * http server
 const server = http.createServer(app);
 
 // * database
 connectDB();
+
+// * redis
+await redis.connect();
 
 // * socket
 initSocket(server);
