@@ -1,9 +1,13 @@
 import http from "http";
 import app from "./app";
 import { initSocket } from "./socket";
+import { connectDB } from "./config/db";
 
 // * http server
 const server = http.createServer(app);
+
+// * database
+connectDB();
 
 // * socket
 initSocket(server);
