@@ -2,21 +2,21 @@ import http from "http";
 import app from "./app";
 import { initSocket } from "./socket";
 import { connectDB } from "./config/db";
-import { redis } from "./config/redis";
+import { connectRedis } from "./config/redis";
+import { connectPubSub } from "./config/redis-pub-sub";
+import env from "./config/env";
 
-// * http server
-const server = http.createServer(app);
+async function bootstrap() {
+	await connectDB();
+	await connectRedis();
+	await connectPubSub();
 
-// * database
-connectDB();
+	const server = http.createServer(app);
+	initSocket(server);
 
-// * redis
-await redis.connect();
+	server.listen(env.PORT, () => {
+		console.log(`Server is running on port ${env.PORT}`);
+	});
+}
 
-// * socket
-initSocket(server);
-
-// * server listening
-server.listen(3000, () =>
-	console.log("Chat server is running on http://localhost:3000")
-);
+bootstrap();

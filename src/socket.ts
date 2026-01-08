@@ -2,6 +2,7 @@ import { Server } from "socket.io";
 import type { Server as HttpServer } from "http";
 import { Message } from "./modules/chat/message.model";
 import { redis } from "./config/redis";
+import { CHANNELS, pubClient, subClient } from "./config/redis-pub-sub";
 
 export const isUserOnline = async (userId: string) => {
 	const socketId = await redis.hGet("online_users", userId);
@@ -23,7 +24,6 @@ export const initSocket = (server: HttpServer) => {
 	});
 
 	io.on("connection", async (socket) => {
-		console.log("Socket connected", socket.id, socket.data.userId);
 		const userId = socket.data.userId;
 		const socketId = socket.id;
 
@@ -34,15 +34,19 @@ export const initSocket = (server: HttpServer) => {
 			status: "online",
 		});
 
-		socket.on("user_online", async (userId) => {
-			socket.data.userId = userId;
-			await redis.hSet("online_users", userId, socket.id);
-
-			socket.broadcast.emit("user_status", {
-				userId,
-				status: "online",
-			});
+		// * finding pending messages
+		const pendingMessages = await Message.find({
+			receiverId: userId,
+			status: "sent",
 		});
+
+		for (const message of pendingMessages) {
+			socket.emit("receive_message", message);
+
+			await Message.findByIdAndUpdate(message._id, {
+				status: "delivered",
+			});
+		}
 
 		socket.on("typing", ({ chatId, userId }) => {
 			socket.to(chatId).emit("typing", userId);
@@ -67,7 +71,8 @@ export const initSocket = (server: HttpServer) => {
 			const receiverSocketId = await isUserOnline(receiverId);
 
 			if (receiverSocketId) {
-				io.to(receiverSocketId).emit("receive_message", text);
+				// io.to(receiverSocketId).emit("receive_message", text);
+				await pubClient.publish(CHANNELS.MESSAGE, JSON.stringify(data));
 
 				// await Message.findByIdAndUpdate(message._id, {
 				// 	status: "delivered",
