@@ -19,7 +19,11 @@ export const getChatMessages = async (req: Request, res: Response) => {
 };
 
 export const createChat = async (req: Request, res: Response) => {
-	const { participants, isGroup } = req.body;
+	const { participants = [], isGroup = false } = req.body;
+
+	if (!participants.length) {
+		return res.status(400).json({ message: "Participants are required" });
+	}
 
 	if (!participants || participants.length < 2) {
 		return res.status(400).json({

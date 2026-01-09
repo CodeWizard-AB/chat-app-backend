@@ -91,6 +91,7 @@ export const initSocket = (server: HttpServer) => {
 			const message = await Message.create({
 				chatId,
 				senderId,
+				receiverId,
 				message: text,
 				status: "sent",
 			});
