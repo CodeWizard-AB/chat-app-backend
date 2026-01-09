@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import { Message } from "./message.model";
 import { Chat } from "./chat.model";
 
-export const getChatMessages = async (req: Request, res: Response) => {
+const getChatMessages = async (req: Request, res: Response) => {
 	const { chatId } = req.params;
 	const page = Number(req.query.page) || 1;
 	const limit = Number(req.query.limit) || 20;
@@ -18,14 +18,14 @@ export const getChatMessages = async (req: Request, res: Response) => {
 	});
 };
 
-export const createChat = async (req: Request, res: Response) => {
+const createChat = async (req: Request, res: Response) => {
 	const { participants = [], isGroup = false } = req.body;
 
 	if (!participants.length) {
 		return res.status(400).json({ message: "Participants are required" });
 	}
 
-	if (!participants || participants.length < 2) {
+	if (!participants.length || participants.length < 2) {
 		return res.status(400).json({
 			message: "At least 2 participants are required to create a chat",
 		});
@@ -47,4 +47,53 @@ export const createChat = async (req: Request, res: Response) => {
 
 	const chat = await Chat.create({ participants, isGroup });
 	res.status(201).json({ status: "success", data: chat });
+};
+
+const getMyChats = async (
+	req: Request & { user: { id: string } },
+	res: Response
+) => {
+	const userId = req.user.id;
+
+	const chats = await Chat.find({
+		participants: userId,
+	})
+		.populate("participants", "name phone")
+		.sort({ updatedAt: -1 });
+
+	res.status(200).json({ status: "success", data: chats });
+};
+
+const addUserToChat = async (req: Request, res: Response) => {
+	const { chatId } = req.params;
+	const { userId } = req.body;
+
+	const chat = await Chat.findByIdAndUpdate(
+		chatId,
+		{ $addToSet: { participants: userId } },
+		{ new: true }
+	);
+
+	res.status(201).json({ status: "success", data: chat });
+};
+
+const deleteUserFromChat = async (req: Request, res: Response) => {
+	const { chatId } = req.params;
+	const { userId } = req.body;
+
+	const chat = await Chat.findByIdAndUpdate(
+		chatId,
+		{ $pull: { participants: userId } },
+		{ new: true }
+	);
+
+	res.status(201).json({ status: "success", data: chat });
+};
+
+export default {
+	createChat,
+	getChatMessages,
+	getMyChats,
+	addUserToChat,
+	deleteUserFromChat,
 };
