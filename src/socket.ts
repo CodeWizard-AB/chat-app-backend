@@ -3,6 +3,7 @@ import type { Server as HttpServer } from "http";
 import { Message } from "./modules/chat/message.model";
 import { redis } from "./config/redis";
 import { CHANNELS, pubClient, subClient } from "./config/redis-pub-sub";
+import { Chat } from "./modules/chat/chat.model";
 
 export const isUserOnline = async (userId: string) => {
 	const socketId = await redis.hGet("online_users", userId);
@@ -21,6 +22,19 @@ export const initSocket = (server: HttpServer) => {
 
 		socket.data.userId = userId;
 		next();
+	});
+
+	subClient.subscribe(CHANNELS.MESSAGE, async (data) => {
+		const { receiverId, message } = JSON.parse(data);
+
+		const socketId = await isUserOnline(receiverId);
+		if (!socketId) return;
+
+		io.to(socketId).emit("receive_message", message);
+
+		await Message.findByIdAndUpdate(message._id, {
+			status: "delivered",
+		});
 	});
 
 	io.on("connection", async (socket) => {
@@ -48,35 +62,56 @@ export const initSocket = (server: HttpServer) => {
 			});
 		}
 
+		socket.on("join_chat", async (chatId: string) => {
+			const chat = await Chat.findById(chatId);
+			if (!chat) return;
+
+			const isParticipant = chat.participants.some(
+				(id) => id.toString() === userId
+			);
+			if (!isParticipant) return;
+
+			socket.join(chatId);
+		});
+
 		socket.on("typing", ({ chatId, userId }) => {
 			socket.to(chatId).emit("typing", userId);
 		});
 
 		socket.on("send_message", async (data) => {
+			// * get data
 			const senderId = socket.data.userId;
 			const { chatId, receiverId, text } = data;
 
+			// * check if chat exists
+			const chat = await Chat.findById(chatId);
+			if (!chat) return;
+
 			// * save message
-			// const message = await Message.create({
-			// 	chatId,
-			// 	senderId,
-			// 	message: text,
-			// 	status: "sent",
-			// });
+			const message = await Message.create({
+				chatId,
+				senderId,
+				message: text,
+				status: "sent",
+			});
 
 			// * emit to sender immediately
 			socket.emit("message_sent", text);
 
-			// * emit to receiver
-			const receiverSocketId = await isUserOnline(receiverId);
+			// * find receiver
+			const receivers = chat.participants.filter(
+				(id) => id.toString() !== senderId
+			);
+			if (!receivers.length) return;
 
-			if (receiverSocketId) {
-				// io.to(receiverSocketId).emit("receive_message", text);
-				await pubClient.publish(CHANNELS.MESSAGE, JSON.stringify(data));
-
-				// await Message.findByIdAndUpdate(message._id, {
-				// 	status: "delivered",
-				// });
+			for (const receiverId of receivers) {
+				await pubClient.publish(
+					CHANNELS.MESSAGE,
+					JSON.stringify({
+						receiverId: receiverId.toString(),
+						message,
+					})
+				);
 			}
 
 			// * emit to sender
@@ -84,11 +119,6 @@ export const initSocket = (server: HttpServer) => {
 				messageId: "message_id",
 				status: "sent",
 			});
-		});
-
-		socket.on("join_chat", (chatId) => {
-			socket.join(chatId);
-			console.log("Socket joined chat", socket.id, chatId);
 		});
 
 		socket.on("chat_opened", async ({ chatId }) => {
@@ -109,22 +139,19 @@ export const initSocket = (server: HttpServer) => {
 				{ status: "read" }
 			);
 
-			// * notify senders
-			unseenMessages.forEach(async (message) => {
-				const senderSocketId = await isUserOnline(message.senderId.toString());
-
-				if (senderSocketId) {
-					io.to(senderSocketId).emit("message_seen", {
-						messageId: message._id,
-						chatId,
-					});
-				}
-			});
+			// * notify unseen messages
+			for (const msg of unseenMessages) {
+				await pubClient.publish(
+					CHANNELS.SEEN,
+					JSON.stringify({
+						senderId: msg.senderId.toString(),
+						messageId: msg._id,
+					})
+				);
+			}
 		});
 
 		socket.on("disconnect", async () => {
-			console.log("Socket disconnected", socket.id);
-
 			const userId = socket.data.userId;
 
 			if (userId) {
